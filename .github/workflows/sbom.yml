@@ -1,0 +1,40 @@
+name: SBOM & Vulnerability Scan
+
+on:
+  push:
+    branches: ["release/*"]
+  pull_request:
+    branches: ["release/*"]
+  workflow_dispatch:
+
+jobs:
+  sbom:
+    name: Generate SBOM and scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build -t postgres:local -f 18/alpine3.23/Dockerfile 18/alpine3.23/
+
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: postgres:local
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+
+      - name: Scan vulnerabilities (Grype)
+        uses: anchore/scan-action@v6
+        with:
+          image: postgres:local
+          fail-build: false
+          output-format: table
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-postgres
+          path: sbom.cdx.json
+          retention-days: 90
