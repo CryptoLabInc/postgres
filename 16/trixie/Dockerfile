@@ -26,27 +26,16 @@ RUN set -ex; \
 	; \
 	rm -rf /var/lib/apt/lists/*
 
-# grab gosu for easy step-down from root
-# https://github.com/tianon/gosu/releases
-ENV GOSU_VERSION 1.19
+# gosu is built with an old Go toolchain that scanners flag; setpriv (util-linux)
+# does the same step-down, so docker-entrypoint.sh keeps calling "gosu".
 RUN set -eux; \
-	savedAptMark="$(apt-mark showmanual)"; \
-	apt-get update; \
-	apt-get install -y --no-install-recommends ca-certificates wget; \
-	rm -rf /var/lib/apt/lists/*; \
-	dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
-	wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch"; \
-	wget -O /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc"; \
-	export GNUPGHOME="$(mktemp -d)"; \
-	gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \
-	gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \
-	gpgconf --kill all; \
-	rm -rf "$GNUPGHOME" /usr/local/bin/gosu.asc; \
-	apt-mark auto '.*' > /dev/null; \
-	[ -z "$savedAptMark" ] || apt-mark manual $savedAptMark > /dev/null; \
-	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+	printf '%s\n' \
+		'#!/bin/sh' \
+		'u="$1"; shift' \
+		'export HOME="$(getent passwd "$u" | cut -d: -f6)"' \
+		'exec setpriv --reuid="$u" --regid="$(id -g "$u")" --init-groups -- "$@"' \
+		> /usr/local/bin/gosu; \
 	chmod +x /usr/local/bin/gosu; \
-	gosu --version; \
 	gosu nobody true
 
 # make the "en_US.UTF-8" locale so postgres will be utf-8 enabled by default
@@ -170,6 +159,16 @@ RUN set -ex; \
 	find /usr -name '*.pyc' -type f -exec bash -c 'for pyc; do dpkg -S "$pyc" &> /dev/null || rm -vf "$pyc"; done' -- '{}' +; \
 	\
 	postgres --version
+
+# pick up Debian security fixes that are newer than the base image
+# (PostgreSQL itself stays at PG_VERSION; pgdg keeps newer versions in the same index)
+RUN set -eux; \
+	apt-mark hold "postgresql-$PG_MAJOR" "postgresql-client-$PG_MAJOR"; \
+	apt-get update; \
+	DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; \
+	apt-mark unhold "postgresql-$PG_MAJOR" "postgresql-client-$PG_MAJOR"; \
+	rm -rf /var/lib/apt/lists/*; \
+	[ "$(dpkg-query -W -f='${Version}' "postgresql-$PG_MAJOR")" = "$PG_VERSION" ]
 
 # make the sample config easier to munge (and "correct by default")
 RUN set -eux; \
