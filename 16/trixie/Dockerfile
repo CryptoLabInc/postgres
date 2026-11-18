@@ -161,10 +161,14 @@ RUN set -ex; \
 	postgres --version
 
 # pick up Debian security fixes that are newer than the base image
+# (PostgreSQL itself stays at PG_VERSION; pgdg keeps newer versions in the same index)
 RUN set -eux; \
+	apt-mark hold "postgresql-$PG_MAJOR" "postgresql-client-$PG_MAJOR"; \
 	apt-get update; \
 	DEBIAN_FRONTEND=noninteractive apt-get upgrade -y; \
-	rm -rf /var/lib/apt/lists/*
+	apt-mark unhold "postgresql-$PG_MAJOR" "postgresql-client-$PG_MAJOR"; \
+	rm -rf /var/lib/apt/lists/*; \
+	[ "$(dpkg-query -W -f='${Version}' "postgresql-$PG_MAJOR")" = "$PG_VERSION" ]
 
 # make the sample config easier to munge (and "correct by default")
 RUN set -eux; \
